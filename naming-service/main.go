@@ -1,0 +1,79 @@
+package main
+
+import (
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+type Node struct {
+	ID      string `json:"id"`
+	Address string `json:"address"`
+}
+
+type NodeStatus struct {
+	ID      string `json:"id"`
+	Address string `json:"address"`
+	Status  string `json:"status"` // UP / DOWN
+}
+
+func main() {
+	r := gin.Default()
+
+	// Daftar storage node (sementara hardcode dulu)
+	nodes := []Node{
+		{ID: "node-1", Address: "http://localhost:8001/health"},
+		{ID: "node-2", Address: "http://localhost:8002/health"},
+		{ID: "node-3", Address: "http://localhost:8003/health"},
+	}
+
+	// Health naming service sendiri
+	r.GET("/health", func(c *gin.Context) {
+		hostname, _ := os.Hostname()
+		c.JSON(http.StatusOK, gin.H{
+			"status":   "UP",
+			"service":  "naming-service",
+			"hostname": hostname,
+		})
+	})
+
+	// List node (static)
+	r.GET("/nodes", func(c *gin.Context) {
+		c.JSON(http.StatusOK, nodes)
+	})
+
+	// Health check semua node
+	r.GET("/nodes/check", func(c *gin.Context) {
+		client := &http.Client{
+			Timeout: 2 * time.Second,
+		}
+
+		statuses := make([]NodeStatus, 0, len(nodes))
+
+		for _, n := range nodes {
+			resp, err := client.Get(n.Address + "/health")
+
+			nodeStatus := NodeStatus{
+				ID:      n.ID,
+				Address: n.Address,
+				Status:  "DOWN",
+			}
+
+			if err == nil && resp.StatusCode == http.StatusOK {
+				nodeStatus.Status = "UP"
+			}
+
+			statuses = append(statuses, nodeStatus)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"checked_at": time.Now().Format(time.RFC3339),
+			"nodes":      statuses,
+		})
+	})
+
+	r.Run(":8080") // naming service listen di 8080
+}
+
