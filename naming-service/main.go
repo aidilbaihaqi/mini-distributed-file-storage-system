@@ -1,16 +1,21 @@
 package main
 
 import (
+	"database/sql"
+	"log"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type Node struct {
-	ID      string `json:"id"`
-	Address string `json:"address"`
+	ID            string     `json:"id"`
+	Address       string     `json:"address"`
+	Status        string     `json:"status"`
+	LastHeartbeat *time.Time `json:"last_heartbeat,omitempty"`
 }
 
 type NodeStatus struct {
@@ -19,15 +24,53 @@ type NodeStatus struct {
 	Status  string `json:"status"` // UP / DOWN
 }
 
-func main() {
-	r := gin.Default()
+var db *sql.DB
 
-	// Daftar storage node (sementara hardcode dulu)
-	nodes := []Node{
-		{ID: "node-1", Address: "http://localhost:8001/health"},
-		{ID: "node-2", Address: "http://localhost:8002/health"},
-		{ID: "node-3", Address: "http://localhost:8003/health"},
+func initDB() {
+	// sesuaikan username/password/database dengan yang tadi dibuat
+	dsn := "dfs_user:admin123@tcp(127.0.0.1:3306)/dfs_meta?parseTime=true"
+
+	var err error
+	db, err = sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("gagal buka koneksi ke MySQL: %v", err)
 	}
+
+	// cek koneksi
+	if err := db.Ping(); err != nil {
+		log.Fatalf("gagal ping MySQL: %v", err)
+	}
+
+	log.Println("✅ Terhubung ke MySQL dfs_meta")
+}
+
+func getAllNodes() ([]Node, error) {
+	rows, err := db.Query(`
+        SELECT id, address, status, last_heartbeat
+        FROM nodes
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.ID, &n.Address, &n.Status, &n.LastHeartbeat); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, n)
+	}
+
+	return nodes, rows.Err()
+}
+
+func main() {
+	initDB()
+	defer db.Close()
+
+	r := gin.Default()
 
 	// Health naming service sendiri
 	r.GET("/health", func(c *gin.Context) {
@@ -39,15 +82,28 @@ func main() {
 		})
 	})
 
-	// List node (static)
+	// List node dari database
 	r.GET("/nodes", func(c *gin.Context) {
+		nodes, err := getAllNodes()
+		if err != nil {
+			log.Println("error ambil nodes:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gagal mengambil data nodes"})
+			return
+		}
 		c.JSON(http.StatusOK, nodes)
 	})
 
-	// Health check semua node
+	// Health check semua node (ping /health ke tiap storage node)
 	r.GET("/nodes/check", func(c *gin.Context) {
 		client := &http.Client{
 			Timeout: 2 * time.Second,
+		}
+
+		nodes, err := getAllNodes()
+		if err != nil {
+			log.Println("error ambil nodes:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gagal mengambil data nodes"})
+			return
 		}
 
 		statuses := make([]NodeStatus, 0, len(nodes))
@@ -74,6 +130,9 @@ func main() {
 		})
 	})
 
-	r.Run(":8080") // naming service listen di 8080
+	log.Println("🚀 Naming service berjalan di :8080")
+	if err := r.Run(":8080"); err != nil {
+		log.Fatalf("gagal menjalankan server: %v", err)
+	}
 }
 
