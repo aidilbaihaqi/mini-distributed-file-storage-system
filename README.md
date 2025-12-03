@@ -134,34 +134,53 @@ Backlog replikasi ketika node DOWN.
 
 ### Quick Start (Backend Only)
 
+#### Untuk WSL/Linux:
+
 1. **Setup Database:**
 ```bash
-mysql -u dfs_user -padmin123 dfs_meta < server/naming-service/schema.sql
+cd ~/projects/dfs/server
+mysql -u dfs_user -padmin123 dfs_meta < naming-service/schema.sql
 ```
 
-2. **Start All Services (Windows):**
+2. **Make Scripts Executable:**
+```bash
+chmod +x *.sh
+```
+
+3. **Start All Services:**
+```bash
+./start-all.sh
+```
+
+4. **Test Upload:**
+```bash
+./test-upload.sh
+```
+
+5. **Check Status:**
+```bash
+./check-status.sh
+```
+
+6. **Stop Services:**
+```bash
+./stop-all.sh
+```
+
+#### Untuk Windows (CMD/PowerShell):
+
 ```bash
 cd server
-start-all.bat
+start-all.bat      # Start services
+test-upload.bat    # Test upload
+check-status.bat   # Check status
 ```
 
-3. **Test Upload:**
-```bash
-cd server
-test-upload.bat
-```
+### Dokumentasi Lengkap
 
-4. **Check Status:**
-```bash
-cd server
-check-status.bat
-```
-
-### Manual Start
-
-Lihat **server/QUICK_START_ID.md** untuk panduan lengkap.
-
-Untuk instalasi dari awal, lihat **INSTALLATION.md**.
+- **WSL/Linux:** Lihat **server/README_LINUX.md** atau **server/SETUP_WSL.md**
+- **Windows:** Lihat **server/QUICK_START_ID.md**
+- **Instalasi dari awal:** Lihat **INSTALLATION.md**
 
 ---
 
