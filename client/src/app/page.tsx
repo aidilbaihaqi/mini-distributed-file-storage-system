@@ -1,12 +1,12 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
-import type { NodeInfo, FileItem } from "@/lib/types"
+import type { NodeInfo, FileItem, ReplicationQueueItem } from "@/lib/types"
 import NodeTable from "@/components/NodeTable"
 import UploadDropzone from "@/components/UploadDropzone"
 import FileExplorer from "@/components/FileExplorer"
 import Panel from "@/components/Panel"
 import StatCard from "@/components/StatCard"
-import { mockHealth, mockNodes, mockFiles } from "@/lib/mock"
+import { getNodes, checkNodes, getHealth, listFiles, uploadFiles, deleteFile as apiDelete, getReplicationQueue } from "@/lib/api"
 
 export default function Home() {
   const [nodes, setNodes] = useState<NodeInfo[]>([])
@@ -14,11 +14,19 @@ export default function Home() {
   const [error, setError] = useState<string|null>(null)
   const [health, setHealth] = useState("unknown")
   const [refreshToken, setRefreshToken] = useState(0)
-  const [files, setFiles] = useState<FileItem[]>(mockFiles)
+  const [files, setFiles] = useState<FileItem[]>([])
+  const [queue, setQueue] = useState<ReplicationQueueItem[]>([])
 
   useEffect(()=>{
-    setNodes(mockNodes)
-    setHealth(mockHealth.status)
+    ;(async()=>{
+      try {
+        const [n, h, f, q] = await Promise.all([getNodes(), getHealth(), listFiles(), getReplicationQueue({ status: 'PENDING' })])
+        setNodes(n)
+        setHealth(h.status)
+        setFiles(f)
+        setQueue(q)
+      } catch(e:any){ setError(e.message) }
+    })()
   },[])
 
   const upDown = useMemo(()=>({
@@ -28,23 +36,28 @@ export default function Home() {
 
   async function refresh(){
     setLoading(true); setError(null)
-    try { setNodes(prev=>prev.map(n=> ({ ...n, lastHeartbeat: new Date().toISOString() }))) } catch(e:any){ setError(e.message) } finally { setLoading(false) }
+    try {
+      const status = await checkNodes()
+      setNodes(status)
+      const f = await listFiles()
+      setFiles(f)
+      const q = await getReplicationQueue({ status: 'PENDING' })
+      setQueue(q)
+    } catch(e:any){ setError(e.message) } finally { setLoading(false) }
   }
 
-  function onFilesAdded(add: File[]){
-    const now = Date.now()
-    const newItems: FileItem[] = add.map((f,i)=>({
-      id: `dummy-${now}-${i}`,
-      filename: f.name,
-      size: f.size,
-      createdAt: new Date().toISOString(),
-      replicas: ['node-1'],
-    }))
-    setFiles(prev=>[...newItems, ...prev])
+  async function onFilesAdded(add: File[]){
+    setLoading(true); setError(null)
+    try {
+      const uploaded = await uploadFiles(add)
+      setFiles(prev=>[...uploaded, ...prev])
+      setRefreshToken(t=>t+1)
+    } catch(e:any){ setError(e.message) } finally { setLoading(false) }
   }
 
-  function onDeleteFile(id: string){
-    setFiles(prev=>prev.filter(f=>f.id!==id))
+  async function onDeleteFile(id: string){
+    setLoading(true); setError(null)
+    try { await apiDelete(id); setFiles(prev=>prev.filter(f=>f.id!==id)) } catch(e:any){ setError(e.message) } finally { setLoading(false) }
   }
 
   return (
@@ -59,10 +72,7 @@ export default function Home() {
         </header>
 
         <Panel title="Naming Service" badge={health}>
-          <StatCard label="Uptime" value={mockHealth.uptime} />
-          <StatCard label="Version" value={mockHealth.version} />
-          <StatCard label="Requests" value={mockHealth.requests} />
-          <StatCard label="Base URL" value={<span className="font-mono">{mockHealth.baseUrl}</span>} />
+          <StatCard label="Status" value={health} />
         </Panel>
 
         <Panel title="Cluster Status" badge={`Naming: ${health}`}>
@@ -72,10 +82,7 @@ export default function Home() {
           <StatCard label="Main" value={nodes.filter(n=>n.role==='MAIN').length} />
           <StatCard label="Backup" value={nodes.filter(n=>n.role==='BACKUP').length} />
           <StatCard label="Replica" value={nodes.filter(n=>n.role==='REPLICA').length} />
-          <StatCard label="Total Files" value={mockHealth.totalFiles ?? '—'} />
-          <StatCard label="Requests" value={mockHealth.requests} />
-          <StatCard label="Uptime" value={mockHealth.uptime} />
-          <StatCard label="Version" value={mockHealth.version} />
+          <StatCard label="Total Files" value={files.length} />
         </Panel>
 
         <div className="p-4 rounded-lg bg-neutral-900 border border-neutral-800">
@@ -86,6 +93,22 @@ export default function Home() {
           <UploadDropzone onUploaded={()=>setRefreshToken(t=>t+1)} onFilesAdded={onFilesAdded} />
           <FileExplorer files={files} onDelete={onDeleteFile} />
         </div>
+
+        <Panel title="Replication Queue" badge={`items: ${queue.length}`}>
+          <div className="p-4 rounded bg-neutral-900 border border-neutral-800">
+            {queue.length === 0 ? (
+              <div className="text-sm text-neutral-400">Tidak ada item pending</div>
+            ) : (
+              <ul className="text-sm font-mono space-y-1">
+                {queue.map(q => (
+                  <li key={q.id}>
+                    [{q.status}] {q.file_key} → {q.target_node_id} from {q.source_node_id} @ {new Date(q.created_at).toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Panel>
       </div>
     </div>
   )
