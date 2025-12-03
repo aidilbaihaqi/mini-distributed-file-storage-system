@@ -1,0 +1,276 @@
+{
+  "info": {
+    "name": "Mini DFS API",
+    "description": "API Collection for Mini Distributed File Storage System.\n\n⚠️ IMPORTANT: Semua request harus melalui Naming Service (Port 8080). Storage Nodes adalah internal API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Public API (Use These!)",
+      "description": "Endpoints yang harus digunakan oleh client. Semua melalui Naming Service (Port 8080).",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["health"]
+            },
+            "description": "Check if naming service is running"
+          }
+        },
+        {
+          "name": "⭐ Upload File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/your/file.txt"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:8080/upload",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["upload"]
+            },
+            "description": "Upload file via naming service. File akan otomatis di-route ke node terbaik dan direplikasi."
+          }
+        },
+        {
+          "name": "⭐ Download File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/download/{{file_key}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["download", "{{file_key}}"]
+            },
+            "description": "Download file via naming service. Request akan di-route ke node terbaik yang memiliki file."
+          }
+        },
+        {
+          "name": "⭐ Delete File",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/files/{{file_key}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["files", "{{file_key}}"]
+            },
+            "description": "Delete file dari semua nodes via naming service."
+          }
+        },
+        {
+          "name": "List All Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/files",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["files"]
+            },
+            "description": "Get list of all files with replica information"
+          }
+        },
+        {
+          "name": "List All Nodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/nodes",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["nodes"]
+            },
+            "description": "Get list of all storage nodes with status and latency"
+          }
+        },
+        {
+          "name": "Health Check All Nodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/nodes/check",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["nodes", "check"]
+            },
+            "description": "Perform real-time health check on all storage nodes"
+          }
+        },
+        {
+          "name": "Get Replication Queue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/replication-queue",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["replication-queue"]
+            },
+            "description": "Monitor replication queue status"
+          }
+        },
+        {
+          "name": "Get Replication Queue - Pending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/replication-queue?status=PENDING",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["replication-queue"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            },
+            "description": "Get pending replication items only"
+          }
+        },
+        {
+          "name": "Get Replication Queue - By Node",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/replication-queue?node_id=node-2",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["replication-queue"],
+              "query": [
+                {
+                  "key": "node_id",
+                  "value": "node-2"
+                }
+              ]
+            },
+            "description": "Get replication queue for specific node"
+          }
+        },
+        {
+          "name": "Manual Recovery - Node 2",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/nodes/node-2/recover",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["nodes", "node-2", "recover"]
+            },
+            "description": "Trigger manual recovery for node-2"
+          }
+        },
+        {
+          "name": "Manual Recovery - Node 3",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/nodes/node-3/recover",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["nodes", "node-3", "recover"]
+            },
+            "description": "Trigger manual recovery for node-3"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Internal API (DO NOT USE DIRECTLY)",
+      "description": "⚠️ WARNING: Endpoints ini hanya untuk internal use oleh Naming Service. Client TIDAK BOLEH mengakses langsung!",
+      "item": [
+        {
+          "name": "⚠️ [Internal] Node 1 - Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8001/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8001",
+              "path": ["health"]
+            },
+            "description": "⚠️ INTERNAL ONLY - Health check storage node 1"
+          }
+        },
+        {
+          "name": "⚠️ [Internal] Node 2 - Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8002/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8002",
+              "path": ["health"]
+            },
+            "description": "⚠️ INTERNAL ONLY - Health check storage node 2"
+          }
+        },
+        {
+          "name": "⚠️ [Internal] Node 3 - Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8003/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8003",
+              "path": ["health"]
+            },
+            "description": "⚠️ INTERNAL ONLY - Health check storage node 3"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "file_key",
+      "value": "your-file-key-here",
+      "type": "string",
+      "description": "File key dari response upload"
+    }
+  ]
+}
