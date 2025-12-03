@@ -32,7 +32,7 @@ export default function FileExplorer({ files, onDelete, viewDefault='grid' }:{ f
               <div className="text-sm font-medium truncate" title={it.filename}>{it.filename}</div>
               <div className="text-xs text-gray-500">{formatBytes(it.size)}</div>
               <div className="flex gap-2">
-                <a className="px-2 py-1 rounded bg-blue-600 text-white text-xs" href={`#`}>Download</a>
+                <a className="px-2 py-1 rounded bg-blue-600 text-white text-xs" href={`/api/download/${it.id}`}>Download</a>
                 <button className="px-2 py-1 rounded bg-red-600 text-white text-xs" onClick={()=>remove(it.id)}>Delete</button>
               </div>
             </div>
@@ -73,7 +73,7 @@ export default function FileExplorer({ files, onDelete, viewDefault='grid' }:{ f
                 <td className="p-2">{new Date(it.createdAt).toLocaleString()}</td>
                 <td className="p-2">
                   <div className="flex gap-2">
-                    <a className="px-2 py-1 rounded bg-blue-600 text-white text-xs" href={`/api/files/${it.id}/download`}>Download</a>
+                    <a className="px-2 py-1 rounded bg-blue-600 text-white text-xs" href={`/api/download/${it.id}`}>Download</a>
                     <button className="px-2 py-1 rounded bg-red-600 text-white text-xs" onClick={()=>remove(it.id)}>Delete</button>
                   </div>
                 </td>

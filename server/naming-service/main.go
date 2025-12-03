@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
+    "mime/multipart"
+    "mime"
 	"net/http"
 	"os"
 	"time"
@@ -289,12 +290,15 @@ func replicateFileToNode(fileKey, sourceNodeAddr, targetNodeAddr string) error {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	
-	// Ambil filename dari header jika ada
-	filename := fileKey
-	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
-		// Parse filename dari Content-Disposition
-		filename = fileKey // fallback
-	}
+    // Ambil filename dari header jika ada
+    filename := fileKey
+    if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+        if _, params, err := mime.ParseMediaType(cd); err == nil {
+            if fn, ok := params["filename"]; ok && fn != "" {
+                filename = fn
+            }
+        }
+    }
 
 	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
