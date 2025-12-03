@@ -148,18 +148,29 @@ async def replicate_to_all_nodes(file_path: Path, file_id: str, original_filenam
     """
     Replikasi file ke semua replica nodes secara parallel
     """
+    # Map node URL ke node ID
+    node_id_map = {
+        "http://localhost:8002": "node-2",
+        "http://localhost:8003": "node-3",
+    }
+    
     tasks = [
         replicate_to_node(node_url, file_path, file_id, original_filename)
         for node_url in REPLICA_NODES
     ]
     results = await asyncio.gather(*tasks)
     
-    # Tambahkan node identifier
-    for i, result in enumerate(results):
-        if i == 0:
-            result["node"] = "node-2"
-        elif i == 1:
-            result["node"] = "node-3"
+    # Tambahkan node identifier berdasarkan URL
+    for result in results:
+        node_url = result.get("node", "")
+        if node_url in node_id_map:
+            result["node_id"] = node_id_map[node_url]
+        else:
+            # Fallback: cek dari URL
+            if "8002" in node_url:
+                result["node_id"] = "node-2"
+            elif "8003" in node_url:
+                result["node_id"] = "node-3"
     
     return list(results)
 
@@ -222,16 +233,18 @@ async def upload_file(file: UploadFile = File(...)):
     )
 
     # Hitung berapa node yang berhasil
-    successful_replicas = [r for r in replication_results if r["success"]]
-    failed_replicas = [r for r in replication_results if not r["success"]]
+    successful_replicas = [r for r in replication_results if r.get("success")]
+    failed_replicas = [r for r in replication_results if not r.get("success")]
+
+    # Tentukan node yang gagal untuk replication queue
+    failed_node_ids = [r.get("node_id") for r in failed_replicas if r.get("node_id")]
 
     # Register ke naming service
-    failed_node_ids = []
-    if "node-2" not in [r.get("node") for r in successful_replicas if r.get("success")]:
-        failed_node_ids.append("node-2")
-    if "node-3" not in [r.get("node") for r in successful_replicas if r.get("success")]:
-        failed_node_ids.append("node-3")
-
+    print(f"📝 Registering file {file_id} to naming service...")
+    print(f"   - Successful replicas: {len(successful_replicas)}")
+    print(f"   - Failed replicas: {len(failed_replicas)}")
+    print(f"   - Failed node IDs: {failed_node_ids}")
+    
     await register_file_to_naming_service(
         file_id,
         file.filename or "",

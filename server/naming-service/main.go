@@ -132,20 +132,33 @@ func measureNodeLatency(nodeAddr string) int64 {
 }
 
 func selectBestNodeForUpload(nodes []Node) *Node {
-	var bestNode *Node
+	// Upload harus selalu ke MAIN node karena hanya MAIN yang handle replication
+	// Jika MAIN down, pilih node lain dengan latency terendah sebagai fallback
+	
+	var mainNode *Node
+	var fallbackNode *Node
 	lowestLatency := int64(9999)
 	
 	for i := range nodes {
 		node := &nodes[i]
 		if node.Status == "UP" {
+			// Prioritas 1: MAIN node
+			if node.Role == "MAIN" {
+				mainNode = node
+			}
+			// Fallback: node dengan latency terendah
 			if node.LatencyMs < lowestLatency {
 				lowestLatency = node.LatencyMs
-				bestNode = node
+				fallbackNode = node
 			}
 		}
 	}
 	
-	return bestNode
+	// Return MAIN node jika UP, otherwise fallback
+	if mainNode != nil {
+		return mainNode
+	}
+	return fallbackNode
 }
 
 func selectBestNodeForDownload(fileKey string, nodes []Node) *Node {
@@ -688,6 +701,8 @@ func main() {
 	r.DELETE("/files/:fileKey", func(c *gin.Context) {
 		fileKey := c.Param("fileKey")
 
+		log.Printf("🗑️ Delete request for file: %s\n", fileKey)
+
 		// Get all nodes that have the file
 		nodeIDs, err := getFileLocations(fileKey)
 		if err != nil {
@@ -695,9 +710,11 @@ func main() {
 			return
 		}
 
+		// Jika tidak ada di file_locations, coba cari di semua nodes
 		if len(nodeIDs) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
-			return
+			// Coba delete dari semua nodes (fallback)
+			nodeIDs = []string{"node-1", "node-2", "node-3"}
+			log.Printf("⚠️ File %s not found in file_locations, trying all nodes\n", fileKey)
 		}
 
 		// Get all nodes info
@@ -716,23 +733,26 @@ func main() {
 		client := &http.Client{Timeout: 10 * time.Second}
 		successCount := 0
 		failCount := 0
+		deletedNodes := []string{}
 
 		for _, nodeID := range nodeIDs {
 			nodeAddr, ok := nodeMap[nodeID]
 			if !ok {
+				log.Printf("⚠️ Node %s not found in nodeMap\n", nodeID)
 				failCount++
 				continue
 			}
 
 			req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/files/%s", nodeAddr, fileKey), nil)
 			if err != nil {
+				log.Printf("❌ Failed to create delete request for %s: %v\n", nodeID, err)
 				failCount++
 				continue
 			}
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Printf("Failed to delete from %s: %v\n", nodeID, err)
+				log.Printf("❌ Failed to delete from %s: %v\n", nodeID, err)
 				failCount++
 				continue
 			}
@@ -740,16 +760,42 @@ func main() {
 
 			if resp.StatusCode == 200 {
 				successCount++
+				deletedNodes = append(deletedNodes, nodeID)
+				log.Printf("✅ Deleted from %s\n", nodeID)
+				
 				// Update file_locations
 				db.Exec(`
 					UPDATE file_locations 
 					SET status = 'DELETED' 
 					WHERE file_key = ? AND node_id = ?
 				`, fileKey, nodeID)
+			} else if resp.StatusCode == 404 {
+				// File not found on this node, not an error
+				log.Printf("ℹ️ File not found on %s (already deleted or never existed)\n", nodeID)
 			} else {
+				log.Printf("❌ Delete from %s returned status %d\n", nodeID, resp.StatusCode)
 				failCount++
 			}
 		}
+
+		// Delete from replication_queue
+		result, err := db.Exec(`DELETE FROM replication_queue WHERE file_key = ?`, fileKey)
+		if err != nil {
+			log.Printf("⚠️ Failed to delete from replication_queue: %v\n", err)
+		} else {
+			rowsAffected, _ := result.RowsAffected()
+			if rowsAffected > 0 {
+				log.Printf("✅ Deleted %d entries from replication_queue\n", rowsAffected)
+			}
+		}
+
+		// Delete from file_locations
+		db.Exec(`DELETE FROM file_locations WHERE file_key = ?`, fileKey)
+
+		// Delete from files table
+		db.Exec(`DELETE FROM files WHERE file_key = ?`, fileKey)
+
+		log.Printf("🗑️ Delete completed for %s: %d success, %d failed\n", fileKey, successCount, failCount)
 
 		c.JSON(http.StatusOK, gin.H{
 			"success":       true,
@@ -757,6 +803,8 @@ func main() {
 			"deleted_from":  successCount,
 			"failed":        failCount,
 			"total_nodes":   len(nodeIDs),
+			"deleted_nodes": deletedNodes,
+			"message":       "File deleted from all nodes and database",
 		})
 	})
 
