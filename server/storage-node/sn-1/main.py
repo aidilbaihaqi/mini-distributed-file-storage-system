@@ -120,7 +120,7 @@ async def replicate_to_node(node_url: str, file_path: Path, file_id: str, origin
                 files = {"file": (original_filename, f, "application/octet-stream")}
                 # Gunakan file_id yang sama untuk konsistensi
                 response = await client.post(
-                    f"{node_url}/files",
+                    f"{node_url}/files?file_id={file_id}",
                     files=files
                 )
                 

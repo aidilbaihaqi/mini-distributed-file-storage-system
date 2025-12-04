@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse
 from uuid import uuid4
 from pathlib import Path
@@ -101,8 +101,9 @@ def health_check():
 
 
 @app.post("/files")
-async def upload_file(file: UploadFile = File(...)):
-    file_id = str(uuid4())
+async def upload_file(file: UploadFile = File(...), request: Request = None):
+    override_id = request.query_params.get("file_id") if request else None
+    file_id = override_id or str(uuid4())
 
     try:
         result = save_file_to_disk(file, file_id)

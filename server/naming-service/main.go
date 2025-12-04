@@ -311,7 +311,7 @@ func replicateFileToNode(fileKey, sourceNodeAddr, targetNodeAddr string) error {
 
 	writer.Close()
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/files", targetNodeAddr), body)
+    req, err := http.NewRequest("POST", fmt.Sprintf("%s/files?file_id=%s", targetNodeAddr, fileKey), body)
 	if err != nil {
 		return fmt.Errorf("gagal create request: %v", err)
 	}
