@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-    "mime/multipart"
-    "mime"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"time"
@@ -42,15 +42,15 @@ type FileMetadata struct {
 }
 
 type ReplicationQueueItem struct {
-	ID            int       `json:"id"`
-	FileKey       string    `json:"file_key"`
-	TargetNodeID  string    `json:"target_node_id"`
-	SourceNodeID  string    `json:"source_node_id"`
-	Status        string    `json:"status"`
-	RetryCount    int       `json:"retry_count"`
-	LastAttempt   *time.Time `json:"last_attempt,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	ErrorMessage  string    `json:"error_message,omitempty"`
+	ID           int        `json:"id"`
+	FileKey      string     `json:"file_key"`
+	TargetNodeID string     `json:"target_node_id"`
+	SourceNodeID string     `json:"source_node_id"`
+	Status       string     `json:"status"`
+	RetryCount   int        `json:"retry_count"`
+	LastAttempt  *time.Time `json:"last_attempt,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
 var db *sql.DB
@@ -115,51 +115,41 @@ func updateNodeLatency(nodeID string, latencyMs int64) error {
 
 func measureNodeLatency(nodeAddr string) int64 {
 	client := &http.Client{Timeout: 2 * time.Second}
-	
+
 	start := time.Now()
 	resp, err := client.Get(nodeAddr + "/health")
 	elapsed := time.Since(start).Milliseconds()
-	
+
 	if err != nil {
 		return 9999 // Return high latency if node is unreachable
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return 9999
 	}
-	
+
 	return elapsed
 }
 
 func selectBestNodeForUpload(nodes []Node) *Node {
-	// Upload harus selalu ke MAIN node karena hanya MAIN yang handle replication
-	// Jika MAIN down, pilih node lain dengan latency terendah sebagai fallback
-	
-	var mainNode *Node
-	var fallbackNode *Node
+	// Semua node sekarang bisa handle upload dan replikasi
+	// Pilih node yang UP dengan latency terendah
+
+	var bestNode *Node
 	lowestLatency := int64(9999)
-	
+
 	for i := range nodes {
 		node := &nodes[i]
 		if node.Status == "UP" {
-			// Prioritas 1: MAIN node
-			if node.Role == "MAIN" {
-				mainNode = node
-			}
-			// Fallback: node dengan latency terendah
 			if node.LatencyMs < lowestLatency {
 				lowestLatency = node.LatencyMs
-				fallbackNode = node
+				bestNode = node
 			}
 		}
 	}
-	
-	// Return MAIN node jika UP, otherwise fallback
-	if mainNode != nil {
-		return mainNode
-	}
-	return fallbackNode
+
+	return bestNode
 }
 
 func selectBestNodeForDownload(fileKey string, nodes []Node) *Node {
@@ -168,17 +158,17 @@ func selectBestNodeForDownload(fileKey string, nodes []Node) *Node {
 	if err != nil || len(nodeIDs) == 0 {
 		return nil
 	}
-	
+
 	// Create map for quick lookup
 	hasFileMap := make(map[string]bool)
 	for _, nodeID := range nodeIDs {
 		hasFileMap[nodeID] = true
 	}
-	
+
 	// Find best node among those that have the file
 	var bestNode *Node
 	lowestLatency := int64(9999)
-	
+
 	for i := range nodes {
 		node := &nodes[i]
 		if node.Status == "UP" && hasFileMap[node.ID] {
@@ -188,7 +178,7 @@ func selectBestNodeForDownload(fileKey string, nodes []Node) *Node {
 			}
 		}
 	}
-	
+
 	return bestNode
 }
 
@@ -216,7 +206,7 @@ func getPendingReplications(targetNodeID string) ([]ReplicationQueueItem, error)
 	var items []ReplicationQueueItem
 	for rows.Next() {
 		var item ReplicationQueueItem
-		if err := rows.Scan(&item.ID, &item.FileKey, &item.TargetNodeID, &item.SourceNodeID, 
+		if err := rows.Scan(&item.ID, &item.FileKey, &item.TargetNodeID, &item.SourceNodeID,
 			&item.Status, &item.RetryCount, &item.LastAttempt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -289,16 +279,16 @@ func replicateFileToNode(fileKey, sourceNodeAddr, targetNodeAddr string) error {
 	// Upload ke target node
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	
-    // Ambil filename dari header jika ada
-    filename := fileKey
-    if cd := resp.Header.Get("Content-Disposition"); cd != "" {
-        if _, params, err := mime.ParseMediaType(cd); err == nil {
-            if fn, ok := params["filename"]; ok && fn != "" {
-                filename = fn
-            }
-        }
-    }
+
+	// Ambil filename dari header jika ada
+	filename := fileKey
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn, ok := params["filename"]; ok && fn != "" {
+				filename = fn
+			}
+		}
+	}
 
 	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
@@ -311,7 +301,7 @@ func replicateFileToNode(fileKey, sourceNodeAddr, targetNodeAddr string) error {
 
 	writer.Close()
 
-    req, err := http.NewRequest("POST", fmt.Sprintf("%s/files?file_id=%s", targetNodeAddr, fileKey), body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/files?file_id=%s", targetNodeAddr, fileKey), body)
 	if err != nil {
 		return fmt.Errorf("gagal create request: %v", err)
 	}
@@ -450,6 +440,33 @@ func main() {
 		})
 	})
 
+	// Endpoint untuk register lokasi file tambahan (untuk replikasi)
+	r.POST("/files/register-location", func(c *gin.Context) {
+		var req struct {
+			FileKey string `json:"file_key"`
+			NodeID  string `json:"node_id"`
+		}
+
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+
+		_, err := db.Exec(`
+			INSERT INTO file_locations (file_key, node_id, status)
+			VALUES (?, ?, 'ACTIVE')
+			ON DUPLICATE KEY UPDATE status = 'ACTIVE'
+		`, req.FileKey, req.NodeID)
+
+		if err != nil {
+			log.Println("error insert file location:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gagal simpan lokasi"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"success": true})
+	})
+
 	// Endpoint untuk recovery - sync file yang pending ke node yang baru UP
 	r.POST("/nodes/:nodeId/recover", func(c *gin.Context) {
 		nodeID := c.Param("nodeId")
@@ -503,14 +520,14 @@ func main() {
 				failCount++
 			} else {
 				markReplicationCompleted(item.ID)
-				
+
 				// Update file_locations
 				db.Exec(`
 					INSERT INTO file_locations (file_key, node_id, status)
 					VALUES (?, ?, 'ACTIVE')
 					ON DUPLICATE KEY UPDATE status = 'ACTIVE'
 				`, item.FileKey, item.TargetNodeID)
-				
+
 				successCount++
 				log.Printf("✅ Replicated %s to %s\n", item.FileKey, item.TargetNodeID)
 			}
@@ -766,7 +783,7 @@ func main() {
 				successCount++
 				deletedNodes = append(deletedNodes, nodeID)
 				log.Printf("✅ Deleted from %s\n", nodeID)
-				
+
 				// Update file_locations
 				db.Exec(`
 					UPDATE file_locations 
@@ -880,7 +897,7 @@ func main() {
 					// Jika node baru UP, trigger recovery
 					if newStatus == "UP" {
 						log.Printf("🔄 Triggering recovery for node %s\n", node.ID)
-						
+
 						// Panggil recovery endpoint secara internal
 						items, err := getPendingReplications(node.ID)
 						if err != nil || len(items) == 0 {
@@ -924,4 +941,3 @@ func main() {
 		log.Fatalf("gagal menjalankan server: %v", err)
 	}
 }
-

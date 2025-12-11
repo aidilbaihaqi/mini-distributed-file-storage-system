@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse
 from uuid import uuid4
 from pathlib import Path
@@ -10,17 +10,21 @@ import httpx
 import asyncio
 from typing import List
 
-app = FastAPI(title="Storage Node 1 - Main")
+app = FastAPI(title="Storage Node 1")
 
-# Daftar replica nodes
-REPLICA_NODES = [
-    "http://localhost:8002",  # sn-2
-    "http://localhost:8003",  # sn-3
-]
+# Konfigurasi node ini
+NODE_ID = "node-1"
+NODE_PORT = 8001
+
+# Daftar semua nodes (akan di-filter untuk exclude diri sendiri)
+ALL_NODES = {
+    "node-1": "http://localhost:8001",
+    "node-2": "http://localhost:8002",
+    "node-3": "http://localhost:8003",
+}
 
 # Naming service URL
 NAMING_SERVICE_URL = "http://localhost:8080"
-NODE_ID = "node-1"
 
 # Folder penyimpanan file
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,9 +32,10 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
-# ==============================
-# Helper Functions
-# ==============================
+def get_other_nodes():
+    """Get list of other nodes (exclude self)"""
+    return {k: v for k, v in ALL_NODES.items() if k != NODE_ID}
+
 
 def get_meta_path(file_id: str) -> Path:
     return UPLOAD_DIR / f"{file_id}.meta.json"
@@ -60,7 +65,7 @@ def load_metadata(file_id: str) -> dict | None:
 
 def save_file_to_disk(file_obj: UploadFile, file_id: str) -> dict:
     original_name = file_obj.filename or ""
-    ext = Path(original_name).suffix  # contoh: ".png", ".docx"
+    ext = Path(original_name).suffix
     stored_name = f"{file_id}{ext}"
     file_path = UPLOAD_DIR / stored_name
 
@@ -87,102 +92,72 @@ def save_file_to_disk(file_obj: UploadFile, file_id: str) -> dict:
 
 
 def resolve_file_path(file_id: str) -> Path:
-    """
-    Cari file 'data' untuk file_id, mengabaikan file metadata (.meta.json).
-    """
-    # kandidat yang BUKAN metadata
     candidates = [
-        p
-        for p in UPLOAD_DIR.glob(f"{file_id}.*")
+        p for p in UPLOAD_DIR.glob(f"{file_id}.*")
         if not p.name.endswith(".meta.json")
     ]
-
-    # kalau tidak ada, fallback ke nama tanpa ekstensi
     if not candidates:
         direct = UPLOAD_DIR / file_id
         if direct.exists():
             candidates.append(direct)
-
     if not candidates:
         raise FileNotFoundError("File tidak ditemukan")
-
-    # ambil yang pertama (sekarang pasti bukan .meta.json)
     return candidates[0]
 
 
-async def replicate_to_node(node_url: str, file_path: Path, file_id: str, original_filename: str) -> dict:
-    """
-    Replikasi file ke node lain
-    """
+async def check_node_health(node_url: str) -> bool:
+    """Check if a node is UP"""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{node_url}/health")
+            return resp.status_code == 200
+    except:
+        return False
+
+
+async def replicate_to_node(node_id: str, node_url: str, file_path: Path, 
+                            file_id: str, original_filename: str) -> dict:
+    """Replicate file to another node"""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             with open(file_path, "rb") as f:
                 files = {"file": (original_filename, f, "application/octet-stream")}
-                # Gunakan file_id yang sama untuk konsistensi
                 response = await client.post(
-                    f"{node_url}/files?file_id={file_id}",
+                    f"{node_url}/files?file_id={file_id}&is_replica=true",
                     files=files
                 )
-                
                 if response.status_code == 200:
-                    return {
-                        "node": node_url,
-                        "success": True,
-                        "response": response.json()
-                    }
+                    return {"node_id": node_id, "success": True}
                 else:
-                    return {
-                        "node": node_url,
-                        "success": False,
-                        "error": f"HTTP {response.status_code}"
-                    }
+                    return {"node_id": node_id, "success": False, "error": f"HTTP {response.status_code}"}
     except Exception as e:
-        return {
-            "node": node_url,
-            "success": False,
-            "error": str(e)
-        }
+        return {"node_id": node_id, "success": False, "error": str(e)}
 
 
-async def replicate_to_all_nodes(file_path: Path, file_id: str, original_filename: str) -> List[dict]:
-    """
-    Replikasi file ke semua replica nodes secara parallel
-    """
-    # Map node URL ke node ID
-    node_id_map = {
-        "http://localhost:8002": "node-2",
-        "http://localhost:8003": "node-3",
-    }
+async def replicate_to_all_nodes(file_path: Path, file_id: str, original_filename: str) -> tuple:
+    """Replicate to all other nodes, return (successful_nodes, failed_nodes)"""
+    other_nodes = get_other_nodes()
     
     tasks = [
-        replicate_to_node(node_url, file_path, file_id, original_filename)
-        for node_url in REPLICA_NODES
+        replicate_to_node(node_id, node_url, file_path, file_id, original_filename)
+        for node_id, node_url in other_nodes.items()
     ]
+    
     results = await asyncio.gather(*tasks)
     
-    # Tambahkan node identifier berdasarkan URL
-    for result in results:
-        node_url = result.get("node", "")
-        if node_url in node_id_map:
-            result["node_id"] = node_id_map[node_url]
-        else:
-            # Fallback: cek dari URL
-            if "8002" in node_url:
-                result["node_id"] = "node-2"
-            elif "8003" in node_url:
-                result["node_id"] = "node-3"
+    successful = [r["node_id"] for r in results if r.get("success")]
+    failed = [r["node_id"] for r in results if not r.get("success")]
     
-    return list(results)
+    return successful, failed
 
 
-async def register_file_to_naming_service(file_key: str, original_filename: str, 
-                                          size_bytes: int, checksum: str, 
-                                          failed_nodes: List[str]):
-    """
-    Register file metadata ke naming service
-    """
+async def register_to_naming_service(file_key: str, original_filename: str,
+                                     size_bytes: int, checksum: str,
+                                     successful_nodes: List[str], failed_nodes: List[str]):
+    """Register file metadata to naming service"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
+            # Register untuk node ini
             payload = {
                 "file_key": file_key,
                 "original_filename": original_filename,
@@ -198,25 +173,35 @@ async def register_file_to_naming_service(file_key: str, original_filename: str,
             )
             
             if response.status_code == 200:
-                print(f"✅ Registered {file_key} to naming service")
+                print(f"[{NODE_ID}] Registered {file_key} to naming service")
+                
+                # Register lokasi untuk node yang berhasil replikasi
+                for node_id in successful_nodes:
+                    try:
+                        await client.post(
+                            f"{NAMING_SERVICE_URL}/files/register-location",
+                            json={"file_key": file_key, "node_id": node_id}
+                        )
+                    except:
+                        pass
             else:
-                print(f"⚠️ Failed to register {file_key}: HTTP {response.status_code}")
+                print(f"[{NODE_ID}] Failed to register {file_key}: HTTP {response.status_code}")
     except Exception as e:
-        print(f"⚠️ Failed to register {file_key} to naming service: {e}")
+        print(f"[{NODE_ID}] Failed to register to naming service: {e}")
 
-
-# ==============================
-# API Endpoints
-# ==============================
 
 @app.get("/health")
 def health_check():
-    return {"status": "UP", "node": "main"}
+    return {"status": "UP", "node_id": NODE_ID}
 
 
 @app.post("/files")
-async def upload_file(file: UploadFile = File(...)):
-    file_id = str(uuid4())
+async def upload_file(file: UploadFile = File(...), request: Request = None):
+    # Check if this is a replica request (don't replicate again)
+    is_replica = request.query_params.get("is_replica", "false").lower() == "true" if request else False
+    override_id = request.query_params.get("file_id") if request else None
+    
+    file_id = override_id or str(uuid4())
 
     try:
         result = save_file_to_disk(file, file_id)
@@ -224,34 +209,27 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menyimpan file: {e}")
 
-    # Replikasi ke node lain secara asynchronous
-    file_path = Path(result["file_path"])
-    replication_results = await replicate_to_all_nodes(
-        file_path, 
-        file_id, 
-        file.filename or ""
-    )
-
-    # Hitung berapa node yang berhasil
-    successful_replicas = [r for r in replication_results if r.get("success")]
-    failed_replicas = [r for r in replication_results if not r.get("success")]
-
-    # Tentukan node yang gagal untuk replication queue
-    failed_node_ids = [r.get("node_id") for r in failed_replicas if r.get("node_id")]
-
-    # Register ke naming service
-    print(f"📝 Registering file {file_id} to naming service...")
-    print(f"   - Successful replicas: {len(successful_replicas)}")
-    print(f"   - Failed replicas: {len(failed_replicas)}")
-    print(f"   - Failed node IDs: {failed_node_ids}")
+    successful_nodes = []
+    failed_nodes = []
     
-    await register_file_to_naming_service(
-        file_id,
-        file.filename or "",
-        result["size"],
-        result["checksum"],
-        failed_node_ids
-    )
+    # Only replicate if this is NOT a replica request
+    if not is_replica:
+        file_path = Path(result["file_path"])
+        successful_nodes, failed_nodes = await replicate_to_all_nodes(
+            file_path, file_id, file.filename or ""
+        )
+        
+        print(f"[{NODE_ID}] Upload {file_id}: replicated to {successful_nodes}, failed: {failed_nodes}")
+        
+        # Register to naming service
+        await register_to_naming_service(
+            file_id,
+            file.filename or "",
+            result["size"],
+            result["checksum"],
+            successful_nodes,
+            failed_nodes
+        )
 
     return {
         "success": True,
@@ -260,13 +238,12 @@ async def upload_file(file: UploadFile = File(...)):
         "original_filename": file.filename,
         "size_bytes": result["size"],
         "checksum_sha256": result["checksum"],
-        "node": "main",
+        "node_id": NODE_ID,
+        "is_replica": is_replica,
         "replication": {
-            "total_nodes": len(REPLICA_NODES),
-            "successful": len(successful_replicas),
-            "failed": len(failed_replicas),
-            "details": replication_results
-        }
+            "successful": successful_nodes,
+            "failed": failed_nodes,
+        } if not is_replica else None
     }
 
 
@@ -275,7 +252,7 @@ async def download_file(file_id: str):
     try:
         file_path = resolve_file_path(file_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="File tidak ditemukan di node ini")
+        raise HTTPException(status_code=404, detail="File tidak ditemukan")
 
     meta = load_metadata(file_id)
     download_name = meta["original_filename"] if meta and meta.get("original_filename") else file_path.name
@@ -284,16 +261,11 @@ async def download_file(file_id: str):
     if media_type is None:
         media_type = "application/octet-stream"
 
-    return FileResponse(
-        path=file_path,
-        media_type=media_type,
-        filename=download_name,
-    )
+    return FileResponse(path=file_path, media_type=media_type, filename=download_name)
 
 
 @app.delete("/files/{file_id}")
 async def delete_file(file_id: str):
-    # hapus file data
     try:
         file_path = resolve_file_path(file_id)
     except FileNotFoundError:
@@ -304,17 +276,11 @@ async def delete_file(file_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menghapus file: {e}")
 
-    # hapus metadata
     meta_path = get_meta_path(file_id)
     if meta_path.exists():
         try:
             os.remove(meta_path)
-        except Exception:
+        except:
             pass
 
-    return {
-        "success": True,
-        "file_id": file_id,
-        "message": "File dan metadata dihapus dari node ini"
-    }
-
+    return {"success": True, "file_id": file_id, "node_id": NODE_ID}

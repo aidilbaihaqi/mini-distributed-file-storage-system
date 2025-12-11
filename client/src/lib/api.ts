@@ -46,7 +46,8 @@ export async function listFiles(): Promise<FileItem[]> {
   const res = await fetch(`${base}/files`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Failed files ${res.status}`)
   const data = await res.json()
-  const files = Array.isArray(data.files) ? data.files : data
+  const files = Array.isArray(data.files) ? data.files : (Array.isArray(data) ? data : [])
+  if (!files || files.length === 0) return []
   return (files as any[]).map(f => ({
     id: f.file_key ?? f.id,
     filename: f.original_filename ?? f.filename,
