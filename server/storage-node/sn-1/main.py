@@ -10,21 +10,31 @@ import httpx
 import asyncio
 from typing import List
 
-app = FastAPI(title="Storage Node 1")
+app = FastAPI(title="Storage Node")
 
-# Konfigurasi node ini
-NODE_ID = "node-1"
-NODE_PORT = 8001
+# Konfigurasi dari environment variables
+NODE_ID = os.getenv("NODE_ID", "node-1")
+NODE_PORT = int(os.getenv("NODE_PORT", "8001"))
+NAMING_SERVICE_URL = os.getenv("NAMING_SERVICE_URL", "http://localhost:8080")
 
-# Daftar semua nodes (akan di-filter untuk exclude diri sendiri)
-ALL_NODES = {
-    "node-1": "http://localhost:8001",
-    "node-2": "http://localhost:8002",
-    "node-3": "http://localhost:8003",
-}
+# Parse ALL_NODES dari environment atau gunakan default
+def parse_all_nodes():
+    env_nodes = os.getenv("ALL_NODES", "")
+    if env_nodes:
+        nodes = {}
+        for pair in env_nodes.split(","):
+            if "=" in pair:
+                node_id, url = pair.split("=", 1)
+                nodes[node_id.strip()] = url.strip()
+        return nodes
+    # Default untuk local development
+    return {
+        "node-1": "http://localhost:8001",
+        "node-2": "http://localhost:8002",
+        "node-3": "http://localhost:8003",
+    }
 
-# Naming service URL
-NAMING_SERVICE_URL = "http://localhost:8080"
+ALL_NODES = parse_all_nodes()
 
 # Folder penyimpanan file
 BASE_DIR = Path(__file__).resolve().parent
@@ -105,16 +115,6 @@ def resolve_file_path(file_id: str) -> Path:
     return candidates[0]
 
 
-async def check_node_health(node_url: str) -> bool:
-    """Check if a node is UP"""
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{node_url}/health")
-            return resp.status_code == 200
-    except:
-        return False
-
-
 async def replicate_to_node(node_id: str, node_url: str, file_path: Path, 
                             file_id: str, original_filename: str) -> dict:
     """Replicate file to another node"""
@@ -157,7 +157,6 @@ async def register_to_naming_service(file_key: str, original_filename: str,
     """Register file metadata to naming service"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Register untuk node ini
             payload = {
                 "file_key": file_key,
                 "original_filename": original_filename,
@@ -175,7 +174,6 @@ async def register_to_naming_service(file_key: str, original_filename: str,
             if response.status_code == 200:
                 print(f"[{NODE_ID}] Registered {file_key} to naming service")
                 
-                # Register lokasi untuk node yang berhasil replikasi
                 for node_id in successful_nodes:
                     try:
                         await client.post(
@@ -197,7 +195,6 @@ def health_check():
 
 @app.post("/files")
 async def upload_file(file: UploadFile = File(...), request: Request = None):
-    # Check if this is a replica request (don't replicate again)
     is_replica = request.query_params.get("is_replica", "false").lower() == "true" if request else False
     override_id = request.query_params.get("file_id") if request else None
     
@@ -212,7 +209,6 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
     successful_nodes = []
     failed_nodes = []
     
-    # Only replicate if this is NOT a replica request
     if not is_replica:
         file_path = Path(result["file_path"])
         successful_nodes, failed_nodes = await replicate_to_all_nodes(
@@ -221,7 +217,6 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
         
         print(f"[{NODE_ID}] Upload {file_id}: replicated to {successful_nodes}, failed: {failed_nodes}")
         
-        # Register to naming service
         await register_to_naming_service(
             file_id,
             file.filename or "",

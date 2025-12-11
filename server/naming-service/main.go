@@ -55,9 +55,22 @@ type ReplicationQueueItem struct {
 
 var db *sql.DB
 
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func initDB() {
-	// sesuaikan username/password/database dengan yang tadi dibuat
-	dsn := "dfs_user:admin123@tcp(127.0.0.1:3306)/dfs_meta?parseTime=true"
+	// Baca config dari environment variables atau gunakan default
+	dbHost := getEnv("DB_HOST", "127.0.0.1")
+	dbPort := getEnv("DB_PORT", "3306")
+	dbUser := getEnv("DB_USER", "dfs_user")
+	dbPassword := getEnv("DB_PASSWORD", "admin123")
+	dbName := getEnv("DB_NAME", "dfs_meta")
+
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", dbUser, dbPassword, dbHost, dbPort, dbName)
 
 	var err error
 	db, err = sql.Open("mysql", dsn)
@@ -65,12 +78,20 @@ func initDB() {
 		log.Fatalf("gagal buka koneksi ke MySQL: %v", err)
 	}
 
-	// cek koneksi
+	// Retry connection (untuk Docker - MySQL mungkin belum siap)
+	for i := 0; i < 30; i++ {
+		if err := db.Ping(); err == nil {
+			break
+		}
+		log.Printf("Menunggu MySQL... (%d/30)\n", i+1)
+		time.Sleep(2 * time.Second)
+	}
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("gagal ping MySQL: %v", err)
 	}
 
-	log.Println("✅ Terhubung ke MySQL dfs_meta")
+	log.Println("Terhubung ke MySQL dfs_meta")
 }
 
 func getAllNodes() ([]Node, error) {

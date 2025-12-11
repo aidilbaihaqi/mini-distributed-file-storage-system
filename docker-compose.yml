@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: dfs-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: dfs_meta
+      MYSQL_USER: dfs_user
+      MYSQL_PASSWORD: admin123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dfs-network
+
+  # Naming Service (Go)
+  naming-service:
+    build:
+      context: ./server/naming-service
+      dockerfile: Dockerfile
+    container_name: dfs-naming-service
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: dfs_user
+      DB_PASSWORD: admin123
+      DB_NAME: dfs_meta
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - dfs-network
+
+  # Storage Node 1
+  storage-node-1:
+    build:
+      context: ./server/storage-node/sn-1
+      dockerfile: Dockerfile
+    container_name: dfs-storage-node-1
+    ports:
+      - "8001:8000"
+    environment:
+      NODE_ID: node-1
+      NODE_PORT: 8000
+      NAMING_SERVICE_URL: http://naming-service:8080
+      ALL_NODES: "node-1=http://storage-node-1:8000,node-2=http://storage-node-2:8000,node-3=http://storage-node-3:8000"
+    volumes:
+      - sn1_data:/app/uploads
+    depends_on:
+      - naming-service
+    networks:
+      - dfs-network
+
+  # Storage Node 2
+  storage-node-2:
+    build:
+      context: ./server/storage-node/sn-2
+      dockerfile: Dockerfile
+    container_name: dfs-storage-node-2
+    ports:
+      - "8002:8000"
+    environment:
+      NODE_ID: node-2
+      NODE_PORT: 8000
+      NAMING_SERVICE_URL: http://naming-service:8080
+      ALL_NODES: "node-1=http://storage-node-1:8000,node-2=http://storage-node-2:8000,node-3=http://storage-node-3:8000"
+    volumes:
+      - sn2_data:/app/uploads
+    depends_on:
+      - naming-service
+    networks:
+      - dfs-network
+
+  # Storage Node 3
+  storage-node-3:
+    build:
+      context: ./server/storage-node/sn-3
+      dockerfile: Dockerfile
+    container_name: dfs-storage-node-3
+    ports:
+      - "8003:8000"
+    environment:
+      NODE_ID: node-3
+      NODE_PORT: 8000
+      NAMING_SERVICE_URL: http://naming-service:8080
+      ALL_NODES: "node-1=http://storage-node-1:8000,node-2=http://storage-node-2:8000,node-3=http://storage-node-3:8000"
+    volumes:
+      - sn3_data:/app/uploads
+    depends_on:
+      - naming-service
+    networks:
+      - dfs-network
+
+  # Client (Next.js)
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: dfs-client
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://naming-service:8080
+    depends_on:
+      - naming-service
+    networks:
+      - dfs-network
+
+volumes:
+  mysql_data:
+  sn1_data:
+  sn2_data:
+  sn3_data:
+
+networks:
+  dfs-network:
+    driver: bridge
